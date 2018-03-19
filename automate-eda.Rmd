@@ -1,0 +1,293 @@
+---
+title: "HW0"
+author: "Juan Manubens"
+date: "January 10, 2018"
+header-includes:
+  - \usepackage[utf8]{inputenc}
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{amsthm}
+  - \usepackage{commath}
+  - \usepackage{listings}
+  - \usepackage{mathtools}
+  - \usepackage{tikz}
+  - \usepackage{hyperref}
+  - \usepackage{subcaption}
+  - \usepackage{multirow}
+  - \usepackage{multicol}
+  - \usepackage{dcolumn}
+  - \usepackage{booktabs}
+  - \usepackage{array}
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+library("knitr"); library("ggplot2"); library("dplyr"); library("glmnet"); library('stringr'); library('tidyr');library("data.table"); library("leaps");library("lmtest") ; library("vcd"); library("splines");library("rms");library("stargazer")
+knitr::opts_chunk$set(tidy=TRUE, fig.width=6,  fig.height=5, fig.align='left', dev = 'pdf')
+opts_knit$set(root.dir = "/Users/Juan//Dropbox/WorkspaceR")
+```
+
+
+
+
+```{r, results='hide', echo=F}
+# Custom Functions
+wnan <-function(X){(which(is.nan(X)))}
+wna <-function(X){(which(is.na(X)))}
+wval <-function(X,val){(which(X == val))}
+len  <- function(i){length(i)}
+lapply.unum <- function(X,Fx){lapply(X,Fx) %>% unlist %>%  as.numeric }
+lapply.uvec <- function(X,Fx){lapply(X,Fx) %>% unlist %>%  as.vector }
+unum <- function(X){X %>% unlist %>%  as.numeric }
+uvec <- function(X){X %>% unlist %>%  as.vector }
+unum <- function(X){X %>% unlist %>% as.numeric}
+p0lm <- function(X){paste0(X, collapse = " + " )}
+p0c <- function(X){paste0(X, collapse = " , " )}
+runcode <- function(x){ eval(parse(text=x))}
+coefnames <- function(x){paste0(names(x)[2:len(x)], collapse = " + ")}
+
+RSQ <- function(predict,actual){   1 - (sum((actual-predict )^2)/sum((actual-mean(actual))^2)) }
+RMSE <- function(predict,actual){  sqrt(mean((predict -actual)^2)) }
+
+
+# Custom DF Operations
+
+get_stats <- function(df_x){
+  cols_df <- colnames(df_x)
+  df_return <- as.data.frame(rep(0, cols_df %>% len)) %>% t %>% as.data.frame
+  
+  rownames(df_return) <- c(1)
+  df_return[2,] <- rep(0, cols_df %>% len)
+  df_return[3,] <- rep(0, cols_df %>% len)
+  n_df <- nrow(df_return)
+  for (i in 1:len(cols_df)){
+    count <- df_x[cols_df[i]] %>% wna %>% len 
+    num_distinct <-  df_x[cols_df[i]] %>% unlist %>% as.vector %>% unique %>% len 
+    df_return[1,i] <- count
+    df_return[2,i] <- 100*count / n
+    df_return[3,i] <- num_distinct
+  }
+  colnames(df_return) <- cols_df
+  rownames(df_stats) <- c('num_NAs', 'perc_NAs', 'num_distinct')
+  return(df_return)
+}
+
+get_stats_rows <- function(df_x){
+  n_df <- nrow(df_x)
+  df_rows <- as.data.frame(rep(0, n_df))
+  df_rows$c2 <- rep(0, n_df)
+  df_rows$c3 <- rep(0, n_df)
+  colnames(df_rows) <- c("ix", "num_NAs", "perc_NAs")
+  
+  for (i in 1:n) {
+    count <- df_x[i, ] %>% is.na %>% unlist %>% as.numeric %>% sum
+    df_rows[i, 1] <- i
+    df_rows[i, 2] <- count
+    df_rows[i, 3] <- 100*count / 31
+  }
+  return(df_rows)
+}
+
+ptable <- function(ix){
+  cols <- colnames(df)
+  ncols <- len(cols)
+  n <- nrow(df)
+  return(100*(table(df[cols[ix]]))/n)
+}
+
+ctable <- function(ix){
+  cols <- colnames(df)
+  ncols <- len(cols)
+  n <- nrow(df)
+  return(1*(table(df[cols[ix]]))/1)
+}
+
+plot_tree <- function(mdl, title){
+  rpart.plot::prp(mdl, extra = 1, faclen = 0, varlen = 0, cex = 0.8, 
+                  round = 1, main = as.character(title), 
+                  box.palette = c('green', 'red'))[mdl$frame$yval]
+}
+
+
+get_ctbl <- function(mdl){
+  yactual <- df_test$death
+  ypred <- predict(mdl, df_test, type="class")
+  tdf <- table(yactual, ypred)
+  ctbl <- tdf[1,] %>% as.data.frame() %>% t %>% as.data.frame
+  ctbl[2,] <- tdf[2,]
+  ctbl$c3 <- c(0,0)
+  ctbl[3,] <- c(0,0,0)
+  a <- ctbl[1,1]
+  b <- ctbl[1,2]
+  c <- ctbl[2,1]
+  d <- ctbl[2,2]
+  c13 <- c / (a + c)
+  c23 <- b / (b + d)
+  c31 <- b / (a + b)
+  c32 <-  c / (c + d)
+  c33 <- (b+c) / (a + b + c + d)
+  row3 <- c(c31,c32,c33)
+  ctbl[3,] <- row3
+  ctbl[1,3] <- c13
+  ctbl[2,3] <- c23
+  rownames(ctbl) <- c('No Charge', 'Capital Charge', 'Use Error')
+  colnames(ctbl) <- c('No Charge Pred.', 'Capital Charge Pred.', 'Model Error')
+  return(ctbl)
+}
+
+
+get_results <- function(mdl, title){
+  plot_tree(mdl, as.character(title))
+  return(get_ctbl(mdl) %>% xtable)
+}
+
+get_ratio <- function(mdl){
+  ctb <- get_ctbl(mdl)
+  fn <- ctb[2,1]
+  fp <- ctb[1,2]
+  return (fn/fp)
+}
+
+get_ctbl(out1) %>% xtable
+
+```
+
+
+
+```{r}
+
+
+# (10) Proceed to univariate and multivariate statistics
+
+
+all_ptables <- lapply(c(1:len(colnames(df))), ptable)
+names(all_ptables) <- cols
+
+all_tables <- lapply(c(1:len(colnames(df))), ctable)
+names(all_tables) <- cols
+all_ptables
+
+304 + 170 + 45 + 112
+
+if(!require('tables')) {
+  install.packages('tables')
+}
+library('tables')
+
+
+
+tabular((Sentencing=as.factor(death)) ~ (Race=defendant_race)*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (Gender=as.factor(gender))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (VictimMale=as.factor(vmale))*(Percent("row") + 1), data = df) %>% latex
+
+
+tabular((Sentencing=as.factor(death)) ~ (Stranger=as.factor(stranger))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (NumVictims=as.factor(numbervictim))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (NumVictims=as.factor(numbervictim))*(Percent("row") + 1), data = df) 
+
+tabular((Sentencing=as.factor(death)) ~ (NumVictims=as.factor(numbervictim))*(Percent("row") + 1), data = df)
+
+tabular((Sentencing=as.factor(death)) ~ (Employed=as.factor(working))*(Percent("row") + 1), data = df) %>% latex
+
+
+tabular((Sentencing=as.factor(death)) ~ (MentalHistory=as.factor(mentalhistory))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (AlcoholHistory=as.factor(alcoholhistory))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (DrugsHistory=as.factor(drugshistory))*(Percent("row") + 1), data = df) %>% latex
+
+tabular((Sentencing=as.factor(death)) ~ (NotForeign=as.factor(birthplace))*(Percent("row") + 1), data = df) %>% latex
+
+
+```
+
+
+
+```{r}
+all_ptables
+all_tables
+```
+
+```{r}
+all_tables
+```
+
+% Variables .. 2-12 are for the defendant
+
+% Defendant
+% 1. death: capital charge (the response variable)
+% 2. gender: defendant male = 1, not =0
+% 3. white: defendant white = 1, not =0
+% 4. black: defendant black = 2, not=0
+% 5. hisp: defendant hispanic = 3, not = 0
+% 6. education: high school, professional school, college graduate =1, no high school degree = 2, unknown = 3
+% 7. birthplace: U.S. born = 1, foreign born = 0
+% 8. working: working = 1, unemployed = 2
+% 9. alcoholhistory: drinking problem history = 1, none = 0
+% 10. drughistory: drug problem history = 1, none = 0
+% 11. retarded: retarded = 1, not = 0
+
+% Criminal:
+
+% 12. mentalhistory: mental illness history = 1, not =0
+% 13. vmale: victim male = 1, female = 0
+% 14. vwhite: victim white = 1, not = 0
+% 15. vblack: victim black = 1, not = 0
+% 16. vhisp: victim hispanic = 1, not = 0
+% 17. bktorture: victim tortured = 1, not = 0 (”bk” indicates before the killing)
+% 18. bkhostage: victim held hostage = 1, not = 0
+% 19. bkbeaten: victim beaten = 1, not = 0
+% 20. bkplead: victim pled for mercy =1, not = 0
+% 21. bksexassault: victim sexually assaulted = 1, not = 0
+% 22. numbervictim: number of homicide victims
+% 23. autogun: automatic firearm used = 1, not =0
+% 24. handgun: handgun used = 1, not = 0
+% 25. residence: homicide at victim’s residence = 1, not = 0 
+% 26. business: homicide at victim’s business = 1, not %27. store: homicide at victim’s store = 1, not = 0
+% 28. stranger: defendant did not know victim = 1, not = 0 
+% 29. rival: defendant and victim rivals = 1, not = 0
+
+
+
+```{r}
+out1 <- rpart(as.factor(death) ~., data = df_train, method = 'class')
+get_ctbl(out1)
+get_ratio(out1) # 3.058824
+get_results(out1, "Base Model") %>% xtable
+```
+
+
+```{r}
+
+out3 <- rpart(as.factor(death) ~., data = df_train, method = 'class',
+              cp = 0.04)
+
+summary(out3)
+get_ctbl(out3)
+get_ratio(out3) #7.714286
+get_results(out3, "Tuned Complexity CART") %>% xtable
+
+```
+
+
+```{r}
+out<-rpart(as.factor(death) ~., data = df_train, method="class",
+            parms = list(prior = c(.75,.25)),cp=.004, control = (minsplit = 3))
+   
+get_ratio(out) #7.714286
+get_ctbl(out)
+get_results(out, "Final CART with Higher Complexity") %>% xtable      
+
+out$cptable
+
+```
+
+
+3
